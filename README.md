@@ -68,3 +68,8 @@ python3 tools/make_test_data.py   # rebuild the test CSV files
 node tests/run_tests.js           # run all tests (needs the playwright package)
 node tools/record_video.js out/   # record the demonstration video (.webm)
 ```
+
+The commentary is text-to-speech: `tools/narration.json` holds the text,
+`tools/make_narration.py` turns it into WAV files with Piper,
+`node tools/record_video.js out/ narration/` records a video paced by those
+clips, and `tools/mix_narration.py out/ narration/ video.mp4` adds the sound.

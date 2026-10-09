@@ -1,7 +1,11 @@
 // ============================================================
 // record_video.js — records the IA demonstration video.
 //
-//   node tools/record_video.js <output-folder>
+//   node tools/record_video.js <output-folder> [narration-folder]
+//
+// With a narration folder (made by tools/make_narration.py) each part
+// lasts as long as its spoken commentary, and timeline.json records
+// when every clip starts, so tools/mix_narration.py can add the sound.
 //
 // Drives the real application in Chromium and records the screen.
 // For every success criterion a caption first names the criterion,
@@ -41,6 +45,40 @@ function serve() {
 const wait = ms => new Promise(r => setTimeout(r, ms));
 let page;
 
+// ----- commentary -----
+// Each part of the video waits for its commentary clip to finish. Without
+// recorded clips the same text sets the pace (about 350 ms per word).
+const NARR_DIR = process.argv[3] ? path.resolve(process.argv[3]) : null;
+const durations = NARR_DIR ? JSON.parse(fs.readFileSync(path.join(NARR_DIR, "durations.json"), "utf8")) : {};
+const texts = {};
+JSON.parse(fs.readFileSync(path.join(__dirname, "narration.json"), "utf8")).forEach(function (s) { texts[s.id] = s.text; });
+// A screen recording does not run exactly in real time, so the start of
+// every clip is also marked in the video itself: a small grey square in
+// the top-left corner whose shade is 10 + 10 x clip number.
+// tools/mix_narration.py finds these shades to place the sound.
+const timeline = [];
+let t0 = 0;
+let clipIndex = 0;
+async function setMarker() {
+    await page.evaluate(function (v) {
+        let m = document.getElementById("__mark");
+        if (!m) {
+            m = document.createElement("div");
+            m.id = "__mark";
+            m.style.cssText = "position:fixed;left:0;top:0;width:10px;height:10px;z-index:100000;pointer-events:none";
+            document.body.appendChild(m);
+        }
+        m.style.background = "rgb(" + v + "," + v + "," + v + ")";
+    }, 10 + clipIndex * 10).catch(function () {});
+}
+async function narrate(id) {
+    timeline.push({ id: id, start: (Date.now() - t0) / 1000 });
+    clipIndex = timeline.length;
+    await setMarker();
+    const seconds = NARR_DIR ? durations[id] : texts[id].split(/\s+/).length * 0.35;
+    await wait(seconds * 1000 + 350);
+}
+
 // ----- overlays: caption bar, click marker, key badge -----
 async function overlays() {
     await page.evaluate(function () {
@@ -60,6 +98,7 @@ async function overlays() {
         ["__cap", "__dot", "__key"].forEach(function (id) { const d = document.createElement("div"); d.id = id; document.body.appendChild(d); });
         document.getElementById("__cap").style.opacity = 0;
     });
+    if (clipIndex > 0) await setMarker();
 }
 // Captions sit in a panel left of the app so they never cover it;
 // on full-width pages (test results) they use a bar at the bottom.
@@ -74,8 +113,7 @@ async function caption(title, text, ms) {
         c.firstChild.textContent = a[0]; c.lastChild.textContent = a[1];
         c.style.opacity = 1;
     }, [title, text, captionMode]);
-    const words = (title + " " + text).split(/\s+/).length;
-    await wait(Math.max(ms || 2500, 160 * words));
+    await wait(400);
 }
 async function click(selector, pause) {
     await overlays();
@@ -113,6 +151,7 @@ async function card(lines, ms) {
         "<div style='text-align:center;max-width:1000px'>" + lines.map(function (l, i) {
             return "<div style='font-size:" + (i === 0 ? 40 : 22) + "px;margin:" + (i === 0 ? "0 0 24px" : "6px 0") + ";" + (i === 0 ? "font-weight:bold" : "") + "'>" + l + "</div>";
         }).join("") + "</div></body></html>");
+    if (clipIndex > 0) await setMarker();
     await wait(ms);
 }
 // The correct option of the question on screen, read from the CSV the
@@ -139,144 +178,189 @@ async function backToStart() {
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: SIZE, recordVideo: { dir: OUT, size: SIZE } });
     page = await context.newPage();
+    t0 = Date.now();
     page.on("dialog", function (d) { d.accept(); });
-    const t0 = Date.now();
+    const results = JSON.parse(fs.readFileSync(path.join(ROOT, "tests", "results.json"), "utf8"));
+    const fPass = results.functional.filter(function (r) { return r.pass; }).length;
+    let n, q;
 
     // ----- Title -----
+    n = narrate("title");
     await card(["Driving Theory Practice", "IB Diploma Programme Computer Science — Internal Assessment video",
-                "Candidate: Liepa Šveikauskaitė", "Each success criterion (CfS) is named first, then shown working in the real application.",
-                "Test numbers (F = functional, S = structural) refer to the test plan in Criterion C."], 5500);
+                "Each success criterion (CfS) is named first, then shown working in the real application.",
+                "Test numbers (F = functional, S = structural) refer to the test plan in Criterion C.",
+                NARR_DIR ? "Commentary: synthetic voice (text-to-speech)." : ""], 0);
+    await n;
 
     // ----- CfS 1: CSV import -----
     await page.goto(BASE + "/index.html");
     await page.waitForSelector("#load-status:not(.hidden)");
-    await caption("CfS 1 — CSV import (test F1)", "On start-up the built-in bank (database/db.en.csv) is loaded and the number of valid questions is reported.", 4000);
+    n = narrate("cfs1");
+    await caption("CfS 1 — CSV import (test F1)", "On start-up the built-in bank (database/db.en.csv) is loaded and the number of valid questions is reported.");
+    await n;
+
+    n = narrate("f2");
+    await caption("CfS 1 — invalid rows are skipped (test F2)", "File: tests/data/mixed_10.csv — 7 valid rows, 3 invalid. Result: 7 loaded, 3 skipped and reported.");
     await click("#mode-custom");
-    await upload("#custom-csv-input", path.join(DATA, "mixed_10.csv"),
-        ["CfS 1 — invalid rows are skipped (test F2)", "File selected: tests/data/mixed_10.csv — 7 valid rows and 3 invalid ones."]);
-    await caption("CfS 1 — invalid rows are skipped (test F2)", "7 questions loaded, 3 invalid rows skipped and reported; the session can start.", 3500);
+    await page.setInputFiles("#custom-csv-input", path.join(DATA, "mixed_10.csv"));
+    await n;
 
     // ----- Reliability -----
-    await upload("#custom-csv-input", path.join(DATA, "empty.csv"),
-        ["Reliability — invalid file (test F16)", "File selected: tests/data/empty.csv (0 bytes)."]);
-    await caption("Reliability — invalid file (test F16)", "Error message, Start stays disabled, the app does not crash.", 3000);
-    await upload("#custom-csv-input", path.join(DATA, "fixed_30.csv"),
-        ["Reliability — retry (test F16)", "A valid file can be chosen straight away: tests/data/fixed_30.csv (10 Easy, 10 Medium, 10 Hard)."]);
-    await wait(1000);
+    n = narrate("f16");
+    await caption("Reliability — invalid file and retry (test F16)", "tests/data/empty.csv: error message, Start disabled, no crash. Then tests/data/fixed_30.csv (10 Easy, 10 Medium, 10 Hard) loads.");
+    await page.setInputFiles("#custom-csv-input", path.join(DATA, "empty.csv"));
+    await wait(5500);
+    await page.setInputFiles("#custom-csv-input", path.join(DATA, "fixed_30.csv"));
+    await n;
 
-    // ----- CfS 6 timer on, CfS 2/3/4/5 in a session -----
-    await caption("CfS 6 — optional timer", "The timer is switched on before the session starts.", 1500);
+    // ----- CfS 6, 2: timer and session -----
+    n = narrate("start");
+    await caption("CfS 6 and 2 — timer and a 30-question session (test F3)", "Timer on; “Question 1 of 30”; the order is shuffled with Fisher–Yates; the timer starts at 0:00.");
     await click("#timer-toggle");
     await click("#start-btn");
-    await caption("CfS 2 — 30 unique questions in random order (test F3)", "“Question 1 of 30”; the order is shuffled with Fisher–Yates. The timer starts at 0:00 (CfS 6).", 3500);
-    let q = await current();
-    await caption("CfS 3 — difficulty and weighted scoring (test F6)", "The difficulty is shown above the question. A correct answer scores 1 (Easy), 2 (Medium) or 3 (Hard) points.", 2500);
-    await click('#answer-buttons button[data-index="' + q.correct + '"]', 1200);
-    await caption("CfS 4 — immediate feedback (test F8)", "Correct: the option turns green, “✓ Correct!”, the explanation is shown and the score rises by the question's points.", 4000);
-    await click("#next-btn");
+    await n;
+
+    n = narrate("scoring");
+    await caption("CfS 3 — difficulty and weighted scoring (test F6)", "The difficulty is shown above each question: Easy 1 point, Medium 2, Hard 3.");
+    await n;
+
+    n = narrate("correct");
+    await caption("CfS 4 — immediate feedback (test F8)", "Correct: the option turns green, “✓ Correct!”, the explanation appears and the score rises.");
     q = await current();
-    await click('#answer-buttons button[data-index="' + (q.correct % 4 + 1) + '"]', 1200);
-    await caption("CfS 4 — immediate feedback (test F7)", "Wrong: the chosen option is red, the correct one green, all options are locked; the score does not change.", 4500);
-    await click("#next-btn");
-    await caption("Accessibility — keyboard only (tests F17, S18–S20)", "Keys A–D answer, Enter or Space moves on. The key hint is shown on every question (F15).", 2500);
+    await click('#answer-buttons button[data-index="' + q.correct + '"]');
+    await n;
+    await click("#next-btn", 300);
+
+    n = narrate("wrong");
+    await caption("CfS 4 — immediate feedback (test F7)", "Wrong: the chosen option is red, the correct one green, and all options are locked.");
+    q = await current();
+    await click('#answer-buttons button[data-index="' + (q.correct % 4 + 1) + '"]');
+    await n;
+    await click("#next-btn", 300);
+
+    n = narrate("keyboard");
+    await caption("Accessibility — keyboard only (tests F17, S18–S20)", "Keys A–D answer, Enter moves on. The key hint is shown on every question (F15).");
     for (let i = 0; i < 4; i++) {
         q = await current();
         await key(letter(q.correct), 900);
         await key("Enter", 700);
     }
-    await caption("CfS 2 and 5 — the rest of the session", "The remaining questions are answered quickly: all Hard and Medium ones correctly, the Easy ones wrongly.", 1500);
+    await n;
+
+    n = narrate("rest");
+    await caption("CfS 2 and 5 — the rest of the session", "Hard and Medium questions answered correctly, Easy ones wrongly.");
     while (await page.isVisible("#screen-quiz")) {
         q = await current();
-        await key(letter(q.difficulty === 1 ? q.correct % 4 + 1 : q.correct), 250);
-        await key("Enter", 250);
+        await key(letter(q.difficulty === 1 ? q.correct % 4 + 1 : q.correct), 200);
+        await key("Enter", 200);
     }
+    await n;
 
     // ----- CfS 5, 6, 7: results -----
-    await wait(500);
-    await caption("CfS 5 and 7 — results (tests F9, F12)", "Total score and percentage of the points available, correct and incorrect counts, correct/total and % per difficulty.", 5000);
-    await caption("CfS 6 — time taken (test F10)", "The time from the first question to the end, to the second.", 3000);
+    n = narrate("results");
+    await caption("CfS 5, 6 and 7 — results (tests F9, F10, F12)", "Score and % of the points available; correct and incorrect counts; correct/total per difficulty; time taken.");
+    await wait(7000);
     await scrollTo("#restart-btn");
+    await n;
 
     // ----- CfS 8: restart -----
-    await caption("CfS 8 — restart without reloading (test F13)", "“Start New Session” returns to the start screen; Start reshuffles and resets every counter and the timer.", 2500);
-    await click("#restart-btn");
+    n = narrate("restart");
+    await caption("CfS 8 — restart without reloading (test F13)", "Back to the start screen; Start reshuffles; score 0 and timer 0:00; no page reload.");
+    await click("#restart-btn", 1200);
     await click("#start-btn");
-    await caption("CfS 8 — restart without reloading (test F13)", "“Question 1 of 30”, score 0, timer 0:00 — the page was not reloaded.", 3500);
+    await n;
+
+    // ----- CfS 7: end early -----
+    n = narrate("early");
+    await caption("CfS 7 — ending a session early (test F23)", "3 answers, then “End session early”: the result covers only the questions answered.");
     for (let i = 0; i < 3; i++) {
         q = await current();
         await click('#answer-buttons button[data-index="' + q.correct + '"]', 300);
         await click("#next-btn", 300);
     }
-    await caption("CfS 7 — ending a session early (test F23)", "After 3 answers the session is ended with “End session early”; the result covers the questions answered.", 2500);
-    await click("#quit-btn", 2000);
-    await wait(1500);
+    await click("#quit-btn", 300);
+    await n;
 
     // ----- CfS 9: history and mistakes -----
-    await caption("CfS 9 — history (test F20)", "Every session is saved on this device under the profile name: statistics, a progress chart and the most-missed questions.", 2000);
-    await click("#results-history-btn", 2500);
+    n = narrate("history");
+    await caption("CfS 9 — history (test F20)", "Saved on this device: statistics, progress chart, most-missed questions and a review of each session's mistakes.");
+    await click("#results-history-btn", 1500);
     await scrollTo("#history-content h3:nth-of-type(2)");
     await wait(2500);
     await scrollTo("[data-review]");
-    await click("[data-review]", 3000);
-    await caption("CfS 9 — practise my mistakes (test F20)", "A session made only of the questions answered wrongly before; its button shows how many there are.", 2000);
+    await click("[data-review]", 300);
+    await n;
+
+    n = narrate("drill");
+    await caption("CfS 9 — practise my mistakes (test F20)", "A session made only of questions answered wrongly before.");
     await scrollTop();
-    await click("#history-back-btn");
-    await click("#drill-btn");
-    await wait(2500);
-    await click("#quit-btn", 2500);
+    await click("#history-back-btn", 400);
+    await click("#drill-btn", 300);
+    await n;
+    await click("#quit-btn", 600);
     await backToStart();
 
-    // ----- CfS 10: own bank with images -----
+    // ----- CfS 10: own bank with pictures -----
+    n = narrate("ownbank");
     await scrollTop();
-    await caption("CfS 10 — own question bank with own pictures (test F21)", "Images sign1.jpg and sign2.jpg are selected, then with_images.csv, which also names missing.jpg.", 2000);
-    await page.setInputFiles("#custom-images-input", [path.join(DATA, "images", "sign1.jpg"), path.join(DATA, "images", "sign2.jpg")]);
-    await wait(1200);
-    await page.setInputFiles("#custom-csv-input", path.join(DATA, "with_images.csv"));
+    await caption("CfS 10 — own question bank with own pictures (test F21)", "sign1.jpg and sign2.jpg are selected, then with_images.csv, which also names missing.jpg; the missing file is reported.");
     await wait(1500);
-    await caption("CfS 10 — own question bank with own pictures (test F21)", "3 questions loaded; the missing picture is named so the user can fix it.", 3500);
-    await click("#start-btn");
-    for (let i = 0; i < 3; i++) {
-        if (await page.isVisible("#question-image")) { await caption("CfS 10 — own pictures (test F21)", "A picture chosen by the user is shown with its question.", 3000); break; }
-        await click("#answer-buttons button >> nth=0", 300); await click("#next-btn", 300);
+    await page.setInputFiles("#custom-images-input", [path.join(DATA, "images", "sign1.jpg"), path.join(DATA, "images", "sign2.jpg")]);
+    await wait(2500);
+    await page.setInputFiles("#custom-csv-input", path.join(DATA, "with_images.csv"));
+    await n;
+
+    n = narrate("picture");
+    await caption("CfS 10 — own pictures (test F21)", "The picture chosen by the user is shown with its question.");
+    await click("#start-btn", 400);
+    for (let i = 0; i < 3 && !(await page.isVisible("#question-image")); i++) {
+        await click("#answer-buttons button >> nth=0", 200); await click("#next-btn", 200);
     }
-    await click("#quit-btn", 1800);
+    await n;
+    await click("#quit-btn", 600);
     await backToStart();
 
     // ----- Usability: language -----
-    await click("#mode-builtin", 1500);
-    await caption("Usability — Lithuanian and English (test F22)", "The interface and the built-in bank switch to Lithuanian; the same question ids keep the history.", 1500);
-    await click("#lang-lt", 2500);
-    await click("#start-btn", 3000);
-    await click("#quit-btn", 1500);
+    n = narrate("language");
+    await caption("Usability — Lithuanian and English (test F22)", "The interface and the built-in bank switch to Lithuanian; the same question ids keep the history.");
+    await click("#mode-builtin", 1000);
+    await click("#lang-lt", 2000);
+    await click("#start-btn", 300);
+    await n;
+    await click("#quit-btn", 600);
     await backToStart();
-    await click("#lang-en", 1500);
+    await click("#lang-en", 800);
 
     // ----- Testing examples -----
+    n = narrate("testing");
     await card(["Examples of testing", "1. Structural tests S1–S31 running inside the real application (tests/test.html)",
-                "2. Working without an internet connection (test F24)", "3. Results of all functional tests F1–F24 (tests/results.json)"], 4000);
+                "2. Working without an internet connection (test F24)", "3. Results of all functional tests F1–F24 (tests/results.json)"], 0);
+    await n;
+
     captionMode = "bottom";
     await page.goto(BASE + "/tests/test.html");
     await page.addStyleTag({ content: "body{padding-bottom:120px}" });
-    await overlays();
-    await caption("Structural tests (tests/test.html)", "Each major function is called with valid, extreme and invalid data while the app runs in the frame below.", 1000);
+    n = narrate("structural");
+    await caption("Structural tests S1–S31 (tests/test.html)", "Each major function is called with valid, extreme and invalid data while the app runs in a frame.");
     await page.waitForFunction(function () { return window.testsFinished === true; }, null, { timeout: 120000 });
-    await caption("Structural tests: " + await page.textContent("#summary"), "S4 found the escaped-quote defect in csv.js; it failed on commit 12a16ba and passes after the fix.", 3500);
-    await page.evaluate(function () { window.scrollTo({ top: 0 }); });
-    for (let y = 0; y < 6; y++) { await page.mouse.wheel(0, 260); await wait(700); }
+    await caption("Structural tests: " + await page.textContent("#summary"), "S4 found the escaped-quote defect in csv.js; it failed on commit 12a16ba and passes after the fix.");
+    for (let y = 0; y < 6; y++) { await page.mouse.wheel(0, 260); await wait(900); }
+    await n;
 
     // Offline: every request that leaves the computer is blocked
     captionMode = "side";
     await page.route("**/*", function (route) { return route.request().url().startsWith(BASE) ? route.continue() : route.abort(); });
     await page.goto(BASE + "/index.html");
     await page.waitForSelector("#load-status:not(.hidden)");
-    await caption("Reliability — no internet connection (test F24)", "All requests outside this computer are blocked. Only the start screen shows and the bank loads (before the fix all four screens appeared).", 3500);
-    await click("#start-btn");
-    q = await page.textContent("#question-progress");
-    await click("#answer-buttons button >> nth=0", 2500);
+    n = narrate("offline");
+    await caption("Reliability — no internet connection (test F24)", "Requests outside this computer are blocked: only the start screen shows, the bank loads, a question can be answered.");
+    await wait(2500);
+    await click("#start-btn", 800);
+    await click("#answer-buttons button >> nth=0", 300);
+    await n;
     await page.unroute("**/*");
 
     // Functional results table
-    const results = JSON.parse(fs.readFileSync(path.join(ROOT, "tests", "results.json"), "utf8"));
     const rows = results.functional.slice().sort(function (a, b) { return +a.id.slice(1) - +b.id.slice(1); }).map(function (r) {
         const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
         return "<tr><td>" + r.id + "</td><td>" + esc(r.criterion) + "</td><td>" + esc(r.actual) + "</td><td style='color:" + (r.pass ? "#15803d" : "#b91c1c") + ";font-weight:bold'>" + (r.pass ? "Pass" : "Fail") + "</td></tr>";
@@ -285,11 +369,12 @@ async function backToStart() {
     await page.setContent("<html><body style='font:13px Arial;margin:20px 20px 120px'><h2 style='margin:0 0 8px'>Functional tests F1–F24 — tests/results.json (" + results.date.slice(0, 10) + ", " + results.browser + ")</h2>" +
         "<table style='border-collapse:collapse;width:100%'><tr style='background:#e8eef7'><th>No.</th><th>Criterion</th><th>Actual result</th><th>Result</th></tr>" + rows + "</table>" +
         "<style>td,th{border:1px solid #ccc;padding:3px 6px;text-align:left}</style></body></html>");
-    await overlays();
-    await caption("Functional tests (tests/run_tests.js)", "Each test drives the interface only — clicks, keys and file uploads — and compares the result with the expected outcome.", 4000);
+    n = narrate("functional");
+    await caption("Functional tests F1–F24 (tests/run_tests.js): " + fPass + " of " + results.functional.length + " passed", "Each test uses the interface only — clicks, key presses and file uploads.");
     for (let y = 0; y < 4; y++) { await page.mouse.wheel(0, 220); await wait(1500); }
+    await n;
 
-    await card(["End of demonstration", "All 10 success criteria and the non-functional criteria were shown working,", "with examples of structural and functional testing."], 3000);
+    await card(["End of demonstration", "All 10 success criteria and the non-functional criteria were shown working,", "with examples of structural and functional testing."], 2500);
 
     const seconds = (Date.now() - t0) / 1000;
     const video = page.video();
@@ -297,5 +382,6 @@ async function backToStart() {
     const webm = await video.path();
     await browser.close();
     server.close();
+    fs.writeFileSync(path.join(OUT, "timeline.json"), JSON.stringify({ video: webm, seconds: seconds, clips: timeline }, null, 2));
     console.log("Recorded " + seconds.toFixed(1) + " s → " + webm);
 })();
