@@ -69,6 +69,18 @@ async function setMarker() {
             document.body.appendChild(m);
         }
         m.style.background = "rgb(" + v + "," + v + "," + v + ")";
+        // A tiny, always-moving element keeps Chromium sending frames to the
+        // recorder; without it the recording can freeze on a still page
+        if (!document.getElementById("__tick")) {
+            const st = document.createElement("style");
+            st.textContent = "@keyframes __tick{from{transform:translateY(0)}to{transform:translateY(2px)}}" +
+                "#__tick{position:fixed;right:0;bottom:0;width:2px;height:2px;background:rgba(0,0,0,.02);" +
+                "z-index:100000;pointer-events:none;animation:__tick .5s linear infinite alternate}";
+            document.head.appendChild(st);
+            const t = document.createElement("div");
+            t.id = "__tick";
+            document.body.appendChild(t);
+        }
     }, 10 + clipIndex * 10).catch(function () {});
 }
 async function narrate(id) {

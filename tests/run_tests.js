@@ -411,6 +411,7 @@ async function runFunctional(browser, base) {
         "edited question shown: " + found + "; source files changed: " + srcChanged, found && !srcChanged);
     await page.close();
     copyServer.close();
+    fs.rmSync(copy, { recursive: true, force: true });   // remove the temporary copy
 
     // F20 — history and practising mistakes (extension of CfS 7)
     page = await openApp(browser, base);

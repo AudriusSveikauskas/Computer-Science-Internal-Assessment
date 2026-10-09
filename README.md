@@ -73,3 +73,7 @@ The commentary is text-to-speech: `tools/narration.json` holds the text,
 `tools/make_narration.py` turns it into WAV files with Piper,
 `node tools/record_video.js out/ narration/` records a video paced by those
 clips, and `tools/mix_narration.py out/ narration/ video.mp4` adds the sound.
+For a commentary in the candidate's own voice, record each paragraph of
+`tools/narration.json` as 01, 02, … 22 (any audio format) and run
+`python3 tools/prepare_recordings.py recordings/ narration/` instead of
+`make_narration.py`; the video is then paced by those recordings.
