@@ -56,6 +56,13 @@ JSON.parse(fs.readFileSync(path.join(__dirname, "narration.json"), "utf8")).forE
 // every clip is also marked in the video itself: a small grey square in
 // the top-left corner whose shade is 10 + 10 x clip number.
 // tools/mix_narration.py finds these shades to place the sound.
+// A line on the title card says where the commentary comes from; it is
+// read from <narration-folder>/source.txt (written by make_narration.py
+// for the synthetic voice; recordings of a real voice have none)
+function commentaryNote() {
+    const file = NARR_DIR ? path.join(NARR_DIR, "source.txt") : null;
+    return file && fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : "";
+}
 const timeline = [];
 let t0 = 0;
 let clipIndex = 0;
@@ -201,7 +208,7 @@ async function backToStart() {
     await card(["Driving Theory Practice", "IB Diploma Programme Computer Science — Internal Assessment video",
                 "Each success criterion (CfS) is named first, then shown working in the real application.",
                 "Test numbers (F = functional, S = structural) refer to the test plan in Criterion C.",
-                NARR_DIR ? "Commentary: synthetic voice (text-to-speech)." : ""], 0);
+                commentaryNote()], 0);
     await n;
 
     // ----- CfS 1: CSV import -----

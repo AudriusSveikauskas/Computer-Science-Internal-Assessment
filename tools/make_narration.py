@@ -33,6 +33,9 @@ def main():
             durations[seg["id"]] = round(w.getnframes() / w.getframerate(), 3)
         print(seg["id"], durations[seg["id"]], "s")
     json.dump(durations, open(os.path.join(out, "durations.json"), "w"), indent=2)
+    # Shown on the title card of the video, so the synthetic voice is declared
+    with open(os.path.join(out, "source.txt"), "w") as f:
+        f.write("Commentary: synthetic voice (text-to-speech).\n")
     print("total", round(sum(durations.values()), 1), "s")
 
 

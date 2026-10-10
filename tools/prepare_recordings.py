@@ -23,9 +23,10 @@ import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Remove rumble below 80 Hz and trim silence quieter than -45 dB at both
+# Remove rumble below 80 Hz, reduce steady background hiss by 10 dB
+# (gently, so the voice is not changed) and trim silence quieter than -45 dB at both
 # ends, keeping 0.15 s around the speech
-CLEAN = ("highpass=f=80,"
+CLEAN = ("highpass=f=80,afftdn=nr=10:nf=-50,"
          "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,"
          "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse")
 # Loudness target for speech on the web (YouTube plays at about -14 LUFS)
