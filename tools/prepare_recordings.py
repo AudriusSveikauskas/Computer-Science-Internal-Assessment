@@ -6,7 +6,7 @@
 The recordings folder holds one file per paragraph of the commentary,
 named by its number: 01.m4a, 02.mp3, 03.wav, ... (any format ffmpeg
 reads). Each file is converted to mono WAV, silence at its start and
-end is trimmed, and it is saved as <id>.wav with the ids of
+end is trimmed, its loudness is brought to -16 LUFS, and it is saved as <id>.wav with the ids of
 tools/narration.json. durations.json is written next to them, so that
 
     node tools/record_video.js <video-folder> <output-folder>
@@ -23,10 +23,29 @@ import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Trim silence quieter than -45 dB at both ends, keep 0.15 s around the speech
-TRIM = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,"
-        "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse,"
-        "loudnorm=I=-18:TP=-1.5")
+# Remove rumble below 80 Hz and trim silence quieter than -45 dB at both
+# ends, keeping 0.15 s around the speech
+CLEAN = ("highpass=f=80,"
+         "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,"
+         "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15,areverse")
+# Loudness target for speech on the web (YouTube plays at about -14 LUFS)
+LOUDNESS = "I=-16:TP=-1.5:LRA=11"
+
+
+def normalise(source, target):
+    """Two-pass loudness normalisation: measure first, then apply one
+    constant gain, so quiet phone recordings become clearly audible
+    without the volume pumping up and down."""
+    probe = subprocess.run(["ffmpeg", "-v", "info", "-i", source, "-af",
+                            CLEAN + ",loudnorm=" + LOUDNESS + ":print_format=json", "-f", "null", "-"],
+                           capture_output=True, text=True, check=True).stderr
+    m = json.loads(probe[probe.rindex("{"):probe.rindex("}") + 1])
+    measured = ":measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true" % (
+        m["input_i"], m["input_tp"], m["input_lra"], m["input_thresh"], m["target_offset"])
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", source, "-af",
+                    CLEAN + ",loudnorm=" + LOUDNESS + measured,
+                    "-ac", "1", "-ar", "44100", target], check=True)
+    return float(m["input_i"])
 
 
 def main():
@@ -40,11 +59,10 @@ def main():
         if name is None:
             sys.exit("Missing recording %02d (%s)" % (number, seg["id"]))
         target = os.path.join(out, seg["id"] + ".wav")
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", os.path.join(src, name),
-                        "-af", TRIM, "-ac", "1", "-ar", "44100", target], check=True)
+        loudness = normalise(os.path.join(src, name), target)
         with wave.open(target) as w:
             durations[seg["id"]] = round(w.getnframes() / w.getframerate(), 3)
-        print("%02d %-11s %5.1f s" % (number, seg["id"], durations[seg["id"]]))
+        print("%02d %-11s %5.1f s   recorded at %.1f LUFS, now -16" % (number, seg["id"], durations[seg["id"]], loudness))
     json.dump(durations, open(os.path.join(out, "durations.json"), "w"), indent=2)
     total = sum(durations.values())
     print("total speech %.1f s" % total)
